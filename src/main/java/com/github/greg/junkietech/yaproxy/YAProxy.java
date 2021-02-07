@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.http.HttpHost;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -34,11 +36,13 @@ public class YAProxy {
     private final Configuration config;
     private final Map<String, ALoadBalancer<ServiceRoute>> serviceMap;
     private final HttpServer server;
+    private final ScheduledExecutorService clearCacheService;
 
     public YAProxy(Configuration config) throws IOException {
         this.config = config;
-        serviceMap = YAProxy.initServiceMap(config);
-        server = YAProxy.initServer(config, serviceMap);
+        this.clearCacheService = Executors.newScheduledThreadPool(config.getProxy().getServices().size());
+        this.serviceMap = initServiceMap();
+        this.server = initServer(serviceMap);
         initShutdownHook();
     }
 
@@ -60,7 +64,7 @@ public class YAProxy {
         server.start();
     }
 
-    private static Map<String, ALoadBalancer<ServiceRoute>> initServiceMap(Configuration config) {
+    private Map<String, ALoadBalancer<ServiceRoute>> initServiceMap() {
         final Map<String, ALoadBalancer<ServiceRoute>> result = new ConcurrentHashMap<>(
                 config.getProxy().getServices().size());
         config.getProxy().getServices().forEach(service -> {
@@ -85,7 +89,7 @@ public class YAProxy {
                             downstreamProxy.toHostString());
                 }
             });
-            result.put(service.getDomain(), YAProxy.createLoadBalancer(config, routes));
+            result.put(service.getDomain(), createLoadBalancer(routes, service.getName()));
             LOGGER.info("service {} (domain {}) initialized", service.getName(), service.getDomain());
         });
         return result;
@@ -109,22 +113,25 @@ public class YAProxy {
         return null;
     }
 
-    private static ALoadBalancer<ServiceRoute> createLoadBalancer(Configuration config, List<ServiceRoute> targetList) {
-        ALoadBalancer<ServiceRoute> result;
+    private ALoadBalancer<ServiceRoute> createLoadBalancer(List<ServiceRoute> targetList, String serviceName) {
+        final ALoadBalancer<ServiceRoute> result;
         switch (config.getLoadBalancerStrategy()) {
             case ROUND_ROBIN:
-                result = new RoundRobinLoadBalancer<>(targetList);
+                result = new RoundRobinLoadBalancer<>(targetList, String.format("lb-%s", serviceName));
                 break;
             case RANDOM:
             default:
-                result = new RandomLoadBalancer<>(targetList);
+                result = new RandomLoadBalancer<>(targetList, String.format("lb-%s", serviceName));
         }
         LOGGER.info("initialized load balancer with {} strategy", config.getLoadBalancerStrategy());
+        clearCacheService.scheduleAtFixedRate(() -> {
+            int count = result.getCache().invalidateExpiredEntries();
+            LOGGER.info("{} cache entr{} invalidated for {}", count, count > 1 ? "ies" : "y", result.getName());
+        }, 1, 1, TimeUnit.MINUTES);
         return result;
     }
 
-    private static HttpServer initServer(Configuration config,
-            final Map<String, ALoadBalancer<ServiceRoute>> serviceMap) throws IOException {
+    private HttpServer initServer(final Map<String, ALoadBalancer<ServiceRoute>> serviceMap) throws IOException {
         HttpServer result = HttpServer.create(new InetSocketAddress(config.getProxy().getListen().getAddress(),
                 config.getProxy().getListen().getPort()), 0);
         LOGGER.info("initializing server listening on {}:{}", config.getProxy().getListen().getAddress(),

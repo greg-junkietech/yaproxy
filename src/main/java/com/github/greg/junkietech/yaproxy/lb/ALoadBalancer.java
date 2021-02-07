@@ -9,9 +9,11 @@ public abstract class ALoadBalancer<T> {
 
     private final List<T> targetList;
     private final Cache cache;
+    private final String name;
 
-    public ALoadBalancer(List<T> targetList) {
+    public ALoadBalancer(List<T> targetList, String name) {
         this.targetList = Collections.unmodifiableList(targetList);
+        this.name = name;
         this.cache = new Cache();
     }
 
@@ -23,6 +25,10 @@ public abstract class ALoadBalancer<T> {
 
     public Cache getCache() {
         return cache;
+    }
+
+    public String getName() {
+        return name;
     }
 
 }

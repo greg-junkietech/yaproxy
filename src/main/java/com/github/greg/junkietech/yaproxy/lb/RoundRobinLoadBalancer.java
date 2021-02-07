@@ -10,8 +10,8 @@ public class RoundRobinLoadBalancer<T> extends ALoadBalancer<T> {
     private int counter = 0;
     private final ReentrantLock lock;
 
-    public RoundRobinLoadBalancer(List<T> targetList) {
-        super(targetList);
+    public RoundRobinLoadBalancer(List<T> targetList, String name) {
+        super(targetList, name);
         lock = new ReentrantLock();
     }
 

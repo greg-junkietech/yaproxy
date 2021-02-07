@@ -6,8 +6,9 @@ import java.util.concurrent.ThreadLocalRandom;
 /* Adapted from https://turkogluc.com/java-concurrency-with-load-balancer-simulation/ */
 
 public class RandomLoadBalancer<T> extends ALoadBalancer<T> {
-    public RandomLoadBalancer(List<T> targetList) {
-        super(targetList);
+
+    public RandomLoadBalancer(List<T> targetList, String name) {
+        super(targetList, name);
     }
 
     @Override
