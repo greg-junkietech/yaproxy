@@ -51,21 +51,26 @@ public class RequestHandler implements HttpHandler {
                 exchange.getRequestMethod(), exchange.getRequestURI().toString(),
                 exchange.getRemoteAddress().toString(), reqHost);
         try {
+            ALoadBalancer<ServiceRoute> lb = serviceMap.get(reqHost);
             /* String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
             if (contentType == null || !contentType.startsWith("application/json")) {
                 HttpIOUtil.writeResponse(exchange, "{'error':'Content-Type application/json is required'}",
                         HttpStatus.SC_BAD_REQUEST);
-            } else */ if (!serviceMap.containsKey(reqHost)) {
+            } else */ if (lb == null) {
                 HttpIOUtil.writeResponse(exchange, "{'error':'no service domain defined for host " + reqHost + "'}",
                         HttpStatus.SC_BAD_REQUEST);
             } else {
-                ALoadBalancer<ServiceRoute> lb = serviceMap.get(reqHost);
                 handleClientRequest(exchange, lb);
             }
         } catch (IOException e) {
             LOGGER.warn("IOException occurred while serving {} {} {} from {} with header Host '{}': {}",
                     exchange.getProtocol(), exchange.getRequestMethod(), exchange.getRequestURI().toString(),
                     exchange.getRemoteAddress().toString(), reqHost, e.getMessage());
+        } catch (RuntimeException e) {
+            LOGGER.warn("RuntimeException occurred while serving {} {} {} from {} with header Host '{}': {}",
+                    exchange.getProtocol(), exchange.getRequestMethod(), exchange.getRequestURI().toString(),
+                    exchange.getRemoteAddress().toString(), reqHost, e.getMessage());
+            LOGGER.warn("RuntimeException details", e);
         }
     }
 
@@ -119,7 +124,7 @@ public class RequestHandler implements HttpHandler {
     private static ProxyRequest createProxyRequest(HttpExchange exchange, ServiceRoute svcRoute) {
         HttpRequest httpRequest;
 
-        // HTTTP/1.1 RFC 2616 section 4.3: https://tools.ietf.org/html/rfc2616
+        // HTTP/1.1 RFC 2616 section 4.3: https://tools.ietf.org/html/rfc2616
         // The presence of a message-body in a request is signaled by the
         // inclusion of a Content-Length or Transfer-Encoding header field in
         // the request's message-headers.
@@ -147,14 +152,13 @@ public class RequestHandler implements HttpHandler {
         copyResponseHeaders(svcResponse.getAllHeaders(), exchange.getResponseHeaders());
 
         if (statusCode == HttpStatus.SC_NOT_MODIFIED) {
-            // HTTTP/1.1 RFC 2616 section 4.3: https://tools.ietf.org/html/rfc2616
+            // HTTP/1.1 RFC 2616 section 4.3: https://tools.ietf.org/html/rfc2616
             // All 1xx (informational), 204 (no content), and 304 (not modified) responses
             // MUST NOT include a message-body. All other responses do include a
             // message-body, although it MAY be of zero length.
             exchange.sendResponseHeaders(statusCode, 0);
         } else {
-            long contentLength = RequestHandler
-                    .getContentLength(svcResponse.getFirstHeader("Content-Length").getValue());
+            long contentLength = RequestHandler.getContentLength(svcResponse.getFirstHeader("Content-Length"));
             exchange.sendResponseHeaders(statusCode, contentLength);
             HttpEntity entity = svcResponse.getEntity();
             if (entity.isChunked()) {
@@ -170,7 +174,7 @@ public class RequestHandler implements HttpHandler {
         OutputStream os = exchange.getResponseBody();
         int statusCode = svcResponse.getStatusLine().getStatusCode();
 
-        // see HTTTP/1.1 RFC 2616 section 14.9: https://tools.ietf.org/html/rfc2616#section-14.9
+        // see HTTP/1.1 RFC 2616 section 14.9: https://tools.ietf.org/html/rfc2616#section-14.9
         Header ccHeader = svcResponse.getFirstHeader(HEADER_CACHE_CONTROL);
         Matcher ccHeaderPatternMatcher;
         final String cachingLoginfo;
@@ -182,7 +186,6 @@ public class RequestHandler implements HttpHandler {
             entity.writeTo(os);
         } else if ((ccHeaderPatternMatcher = Pattern.compile(" *(public, *)?(max-age|s-maxage)=(\\d+)")
                 .matcher(ccHeader.getValue())).matches()) {
-            // TODO cope with large content where content length exceeds int capacity
             byte[] content = handleCachingResponseBody(entity, lb, proxyRequest, contentLength, ccHeaderPatternMatcher,
                     svcResponse.getAllHeaders());
             cachingLoginfo = String.format("cached as supported %s", ccHeader);
@@ -203,6 +206,7 @@ public class RequestHandler implements HttpHandler {
     private static byte[] handleCachingResponseBody(HttpEntity entity, ALoadBalancer<ServiceRoute> lb,
             ProxyRequest proxyRequest, long contentLength, Matcher ccHeaderPatternMatcher, Header[] responseHeaders)
             throws IOException {
+        // TODO cope with large content where content length exceeds int capacity (2'048 MB)
         ByteArrayOutputStream baos = new ByteArrayOutputStream((int)contentLength);
         entity.writeTo(baos);
         byte[] responseBody = baos.toByteArray();
@@ -214,9 +218,16 @@ public class RequestHandler implements HttpHandler {
         return responseBody;
     }
 
-    private static long getContentLength(String contentLengthHeader) {
+    private static long getContentLength(Header contentLengthHeader) {
         if (contentLengthHeader != null) {
-            return Long.parseLong(contentLengthHeader);
+            return getContentLength(contentLengthHeader.getValue());
+        }
+        return -1L;
+    }
+
+    private static long getContentLength(String contentLengthHeaderValue) {
+        if (contentLengthHeaderValue != null) {
+            return Long.parseLong(contentLengthHeaderValue);
         }
         return -1L;
     }

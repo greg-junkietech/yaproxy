@@ -5,6 +5,7 @@ import java.io.OutputStream;
 
 import com.sun.net.httpserver.HttpExchange;
 
+@SuppressWarnings("restriction")
 public class HttpIOUtil {
     public static void writeResponse(HttpExchange exchange, String response, int code) throws IOException {
         writeResponse(exchange, response.getBytes(), code);

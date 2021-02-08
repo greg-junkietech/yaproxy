@@ -42,7 +42,7 @@ public class YAProxy {
         this.config = config;
         this.clearCacheService = Executors.newScheduledThreadPool(config.getProxy().getServices().size());
         this.serviceMap = initServiceMap();
-        this.server = initServer(serviceMap);
+        this.server = initServer();
         initShutdownHook();
     }
 
@@ -59,9 +59,9 @@ public class YAProxy {
     }
 
     public void start() {
+        server.start();
         LOGGER.info("server listening on {}:{}...", config.getProxy().getListen().getAddress(),
                 config.getProxy().getListen().getPort());
-        server.start();
     }
 
     private Map<String, ALoadBalancer<ServiceRoute>> initServiceMap() {
@@ -98,6 +98,7 @@ public class YAProxy {
     private static HttpHost setupDownstreamProxy(HttpClientBuilder builder, EndPoint host, Service service,
             Proxy proxy) {
         String proxyHost = null;
+        HttpHost result = null;
         if (host.getDownstreamPoxy() != null) {
             proxyHost = host.getDownstreamPoxy();
         } else if (service.getDownstreamPoxy() != null) {
@@ -106,11 +107,10 @@ public class YAProxy {
             proxyHost = proxy.getDownstreamPoxy();
         }
         if (proxyHost != null) {
-            HttpHost result = HttpHost.create(proxyHost);
+            result = HttpHost.create(proxyHost);
             builder.setProxy(result);
-            return result;
         }
-        return null;
+        return result;
     }
 
     private ALoadBalancer<ServiceRoute> createLoadBalancer(List<ServiceRoute> targetList, String serviceName) {
@@ -131,7 +131,7 @@ public class YAProxy {
         return result;
     }
 
-    private HttpServer initServer(final Map<String, ALoadBalancer<ServiceRoute>> serviceMap) throws IOException {
+    private HttpServer initServer() throws IOException {
         HttpServer result = HttpServer.create(new InetSocketAddress(config.getProxy().getListen().getAddress(),
                 config.getProxy().getListen().getPort()), 0);
         LOGGER.info("initializing server listening on {}:{}", config.getProxy().getListen().getAddress(),
